@@ -77,5 +77,20 @@ uint8_t ip_prefix_match(uint8_t *ipa, uint8_t *ipb)
  */
 uint16_t checksum16(uint16_t *data, size_t len)
 {
-    // TO-DO
+    uint32_t sum = 0;
+    while (len > 1){
+        sum = sum + *data;
+        data = data + 1;
+        len = len - sizeof(uint16_t);
+    }
+    // 单数时，剩下一个（8位）
+    if (len){
+        sum = sum + *((uint8_t*)data);
+    }
+    // 将前面的进位加到后面16位,防止加一次之后又会有新进位，所以while
+    while (sum >> 16){
+        sum = (sum >> 16) + (sum & 0xffff);
+    }
+    // 取反
+    return (uint16_t)~sum;
 }

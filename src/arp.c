@@ -58,7 +58,15 @@ void arp_print()
  */
 void arp_req(uint8_t *target_ip)
 {
-    // TO-DO
+    buf_init(&txbuf, sizeof(arp_pkt_t));
+    arp_pkt_t* arp_pkt = (arp_pkt_t*)txbuf.data;
+    //use the inital pkt to init
+    *arp_pkt = arp_init_pkt;
+    arp_pkt->opcode16 = constswap16(ARP_REQUEST);
+    for (int i=0;i<NET_IP_LEN;i++){
+        (arp_pkt->target_ip)[i] = target_ip[i];
+    }
+    ethernet_out(&txbuf, ether_broadcast_mac, NET_PROTOCOL_ARP);
 }
 
 /**
@@ -69,7 +77,18 @@ void arp_req(uint8_t *target_ip)
  */
 void arp_resp(uint8_t *target_ip, uint8_t *target_mac)
 {
-    // TO-DO
+    buf_init(&txbuf, sizeof(arp_pkt_t));
+    arp_pkt_t* arp_pkt = (arp_pkt_t*)txbuf.data;
+    //use the inital pkt to init
+    *arp_pkt = arp_init_pkt;
+    arp_pkt->opcode16 = constswap16(ARP_REPLY);
+    for (int i=0;i<NET_IP_LEN;i++){
+        (arp_pkt->target_ip)[i] = target_ip[i];
+    }
+    for (int i=0;i<NET_MAC_LEN;i++){
+        (arp_pkt->target_mac)[i] = target_mac[i];
+    }
+    ethernet_out(&txbuf, target_mac, NET_PROTOCOL_ARP);
 }
 
 /**
@@ -80,7 +99,33 @@ void arp_resp(uint8_t *target_ip, uint8_t *target_mac)
  */
 void arp_in(buf_t *buf, uint8_t *src_mac)
 {
-    // TO-DO
+    if (buf->len < sizeof(arp_pkt_t)){
+        printf("arp_in: len error\n");
+        return;
+    }
+    arp_pkt_t *arp_pkt = (arp_pkt_t*)buf->data;
+    // head check
+    if (arp_pkt->hw_type16 != arp_init_pkt.hw_type16 ||
+        arp_pkt->pro_type16 != arp_init_pkt.pro_type16 ||
+        arp_pkt->hw_len != arp_init_pkt.hw_len ||
+        arp_pkt->pro_len != arp_init_pkt.pro_len ||
+        (arp_pkt->opcode16 != constswap16(ARP_REPLY) &&
+         arp_pkt->opcode16 != constswap16(ARP_REQUEST))){
+            return;
+         }
+    
+    map_set(&arp_table, arp_pkt->sender_ip, src_mac);
+    buf_t* got_buf = map_get(&arp_buf, arp_pkt->sender_ip);
+    if (got_buf != NULL){
+        ethernet_out(got_buf, arp_pkt->sender_mac, NET_PROTOCOL_IP);
+        map_delete(&arp_buf, arp_pkt->sender_ip);
+    }
+    else{
+        if (arp_pkt->opcode16 == constswap16(ARP_REQUEST) &&
+            memcmp(arp_pkt->target_ip, net_if_ip, NET_IP_LEN) == 0){
+                arp_resp(arp_pkt->sender_ip, arp_pkt->sender_mac);
+            }
+    }
 }
 
 /**
@@ -92,7 +137,17 @@ void arp_in(buf_t *buf, uint8_t *src_mac)
  */
 void arp_out(buf_t *buf, uint8_t *ip)
 {
-    // TO-DO
+    uint8_t *mac = map_get(&arp_table, ip);
+
+    if (mac != NULL){
+        ethernet_out(buf, mac, NET_PROTOCOL_IP);
+    }
+    else{
+        if (map_get(&arp_buf, ip) == NULL){
+            map_set(&arp_buf, ip, buf);
+            arp_req(ip);
+        }
+    }
 }
 
 /**

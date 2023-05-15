@@ -18,7 +18,27 @@ map_t udp_table;
  */
 static uint16_t udp_checksum(buf_t *buf, uint8_t *src_ip, uint8_t *dst_ip)
 {
-    // TO-DO
+    uint16_t len = buf->len;
+    udp_hdr_t* udp_hdr = (udp_hdr_t*) buf->data;
+    buf_add_header(buf, sizeof(udp_peso_hdr_t));
+    udp_peso_hdr_t hdr;
+
+    memcpy(&hdr, buf->data, sizeof(udp_peso_hdr_t));
+
+    udp_peso_hdr_t* pkg = (udp_peso_hdr_t*)buf->data;
+// 填充即可
+    memcpy(pkg->src_ip, src_ip, NET_IP_LEN);
+    memcpy(pkg->dst_ip, dst_ip, NET_IP_LEN);
+    pkg->placeholder = 0;
+    pkg->protocol = NET_PROTOCOL_UDP;
+    pkg->total_len16 = swap16(len);
+
+    udp_hdr->checksum16 = 0;
+    uint16_t checksum = checksum16((uint16_t*)pkg, buf->len % 2 == 0 ? buf->len : buf->len+1);
+    udp_hdr->checksum16 = swap16(checksum);
+    memcpy(pkg, &hdr, sizeof(udp_peso_hdr_t));
+    buf_remove_header(buf, sizeof(udp_peso_hdr_t));
+    return checksum; 
 }
 
 /**
@@ -29,7 +49,26 @@ static uint16_t udp_checksum(buf_t *buf, uint8_t *src_ip, uint8_t *dst_ip)
  */
 void udp_in(buf_t *buf, uint8_t *src_ip)
 {
-    // TO-DO
+    if(buf->len < sizeof(udp_hdr_t))
+        return;
+    udp_hdr_t* pkg = (udp_hdr_t*) buf->data;
+    uint16_t checksum = pkg->checksum16;
+    pkg->checksum16 = 0;
+    // 注意swap
+    if(checksum != swap16(udp_checksum(buf, src_ip, net_if_ip)))
+        return;
+    pkg->checksum16 = checksum;
+    uint16_t dst_port = swap16(pkg->dst_port16);
+
+    udp_handler_t* handler = map_get(&udp_table, &dst_port);
+    if(handler == NULL){
+        buf_add_header(buf, sizeof(ip_hdr_t));
+        icmp_unreachable(buf, net_if_ip, ICMP_CODE_PORT_UNREACH);
+    }
+    else{
+        buf_remove_header(buf, sizeof(udp_hdr_t));
+        (*handler)(buf->data, buf->len, src_ip, swap16(pkg->src_port16));
+    }
 }
 
 /**
@@ -42,7 +81,15 @@ void udp_in(buf_t *buf, uint8_t *src_ip)
  */
 void udp_out(buf_t *buf, uint16_t src_port, uint8_t *dst_ip, uint16_t dst_port)
 {
-    // TO-DO
+    buf_add_header(buf, sizeof(udp_hdr_t));
+    udp_hdr_t* pkg = (udp_hdr_t*) buf->data;
+    // 填充
+    pkg->dst_port16 = swap16(dst_port);
+    pkg->src_port16 = swap16(src_port);
+    pkg->total_len16 = swap16(buf->len);
+    pkg->checksum16 = 0;
+    pkg->checksum16 = swap16(udp_checksum(buf, net_if_ip, dst_ip));
+    ip_out(buf, dst_ip, NET_PROTOCOL_UDP);
 }
 
 /**
